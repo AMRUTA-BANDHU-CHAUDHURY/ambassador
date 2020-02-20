@@ -65,7 +65,7 @@ class IR:
     clusters: Dict[str, IRCluster]
     agent_active: bool
     agent_service: Optional[str]
-    agent_port: Optional[int]
+    agent_orgination_ctx: Optional[IRTLSContext]
     edge_stack_allowed: bool
     file_checker: Callable[[str], bool]
     filters: List[IRFilter]
@@ -160,6 +160,7 @@ class IR:
 
         self.agent_active = (os.environ.get("AGENT_SERVICE", None) != None)
         self.edge_stack_allowed = os.path.exists('/ambassador/.edge_stack')
+        self.agent_orgination_ctx = None
 
         # OK, time to get this show on the road. First things first: set up the
         # Ambassador module.
@@ -393,8 +394,10 @@ class IR:
             ctx.referenced_by(self.ambassador_module)
             self.save_tls_context(ctx)
             
-            self.logger.info(f"Intercept agent: saving TLSContext {ctx.name}")
+            self.logger.info(f"Intercept agent: saving origination TLSContext {ctx.name}")
             self.logger.info(ctx.as_json())
+
+            self.agent_orgination_ctx = ctx
 
     def agent_finalize(self, aconf) -> None:
         if not (self.edge_stack_allowed and self.agent_active):
@@ -426,12 +429,19 @@ class IR:
         # routed insecure. !*@&#*!@&#* We need per-mapping security settings.
         #
         # XXX What if they already have a mapping with this name?
+
+        ctx_name = None
+
+        if self.agent_orgination_ctx:
+            ctx_name = self.agent_origination_ctx.name
+
         mapping = IRHTTPMapping(self, aconf, rkey=self.ambassador_module.rkey, location=self.ambassador_module.location,
                                 name="agent-fallback-mapping",
                                 metadata_labels={"ambassador_diag_class": "private"},
                                 prefix="/",
                                 rewrite="/",
                                 service=f"127.0.0.1:{agent_port}",
+                                tls=ctx_name,
                                 precedence=-999999) # No, really. See comment above.
 
         mapping.referenced_by(self.ambassador_module)
